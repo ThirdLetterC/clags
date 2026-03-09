@@ -77,6 +77,10 @@ static inline const char *clags__skip_space(const char *value) {
   return trimmed != nullptr && (*trimmed == '-' || *trimmed == '+');
 }
 
+[[nodiscard]] static inline bool clags__is_empty_string(const char *value) {
+  return value != nullptr && *value == '\0';
+}
+
 [[nodiscard]] static inline bool
 clags__list_expected_item_size(clags_value_type_t value_type,
                                size_t *expected_item_size) {
@@ -522,8 +526,6 @@ bool clags__verify_double(clags_config_t *config, const char *arg_name,
 
 bool clags__verify_choice(clags_config_t *config, const char *arg_name,
                           const char *arg, void *pvalue, void *data) {
-  if (pvalue == nullptr)
-    return false;
   clags_choice_t **pchoice = (clags_choice_t **)pvalue;
   clags_choices_t *choices = (clags_choices_t *)data;
   for (size_t i = 0; i < choices->count; ++i) {
@@ -756,10 +758,6 @@ bool clags__verify_subcmd(clags_config_t *config, const char *arg_name,
     if (strcmp(subcmd.name, arg) == 0) {
       if (pvalue)
         *(clags_subcmd_t **)pvalue = &subcmds->items[i];
-      clags_config_t *child_config = subcmd.config;
-      if (child_config) {
-        child_config->parent = config;
-      }
       return true;
     }
   }
@@ -1044,6 +1042,15 @@ bool clags__validate_flag(clags_config_t *config, clags_flag_t flag) {
 bool clags__validate_config(clags_config_t *config) {
   bool result = true;
   // validate options
+  if (clags__is_empty_string(config->options.list_terminator)) {
+    clags_log(config, Clags_ConfigError,
+              "'.list_terminator' may not be empty.");
+    clags_return_defer(false);
+  }
+  if (clags__is_empty_string(config->options.ignore_prefix)) {
+    clags_log(config, Clags_ConfigError, "'.ignore_prefix' may not be empty.");
+    clags_return_defer(false);
+  }
   if (config->options.list_terminator &&
       strcmp(config->options.list_terminator, "--") == 0) {
     clags_log(config, Clags_ConfigError,
@@ -1056,6 +1063,14 @@ bool clags__validate_config(clags_config_t *config) {
     clags_log(config, Clags_ConfigError,
               "'.ignore_prefix' may not be '--' since this conflicts with the "
               "long option and flag prefix!");
+    clags_return_defer(false);
+  }
+  if (config->options.list_terminator != nullptr &&
+      config->options.ignore_prefix != nullptr &&
+      strcmp(config->options.list_terminator, config->options.ignore_prefix) ==
+          0) {
+    clags_log(config, Clags_ConfigError,
+              "'.list_terminator' and '.ignore_prefix' may not be identical.");
     clags_return_defer(false);
   }
 
@@ -1584,7 +1599,15 @@ static void clags__format_lhs(char *buffer, size_t buf_size, char short_flag,
   size_t suffix_len = strlen(suffix) + 3;
   size_t remaining = buf_size > 1 ? buf_size - 1 : 0;
 
-  const char *prefix = (short_flag && long_flag) ? "-o, --" : "--";
+  char prefix[8] = {'-', '-', '\0', '\0', '\0', '\0', '\0', '\0'};
+  if (short_flag && long_flag) {
+    prefix[1] = short_flag;
+    prefix[2] = ',';
+    prefix[3] = ' ';
+    prefix[4] = '-';
+    prefix[5] = '-';
+    prefix[6] = '\0';
+  }
 
   size_t prefix_len = strlen(prefix);
   size_t max_long = 0;
@@ -1790,6 +1813,9 @@ void clags_config_free_allocs(clags_config_t *config) {
   CLAGS_FREE(allocs->items);
   allocs->items = nullptr;
   allocs->count = allocs->capacity = 0;
+  if (config->options.duplicate_strings) {
+    config->name = nullptr;
+  }
 }
 
 void clags_config_free(clags_config_t *config) {

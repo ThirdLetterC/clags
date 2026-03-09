@@ -283,6 +283,129 @@ void test_list_item_size_mismatch_rejected() {
   clags_list_free(&ints);
 }
 
+// 13. Empty ignore prefixes are rejected as invalid config
+void test_empty_ignore_prefix_rejected() {
+  char *value = nullptr;
+
+  clags_config_t config = {
+      .args = (clags_arg_t[]){{.type = Clags_Positional,
+                               .pos = {.arg_name = "value",
+                                       .value_type = Clags_String,
+                                       .variable = &value}}},
+      .args_count = 1,
+      .options =
+          {
+              .ignore_prefix = "",
+              .min_log_level = Clags_NoLogs,
+          },
+  };
+
+  char *argv[] = {"prog", "value"};
+  int argc = 2;
+
+  clags_config_t *parse_result = clags_parse(argc, argv, &config);
+  assert(parse_result == &config);
+  assert(config.error == Clags_Error_InvalidConfig);
+  assert(value == nullptr);
+}
+
+// 14. Empty list terminators are rejected as invalid config
+void test_empty_list_terminator_rejected() {
+  clags_list_t values = clags_list();
+
+  clags_config_t config = {
+      .args = (clags_arg_t[]){{.type = Clags_Positional,
+                               .pos = {.arg_name = "values",
+                                       .value_type = Clags_String,
+                                       .variable = &values,
+                                       .is_list = true}}},
+      .args_count = 1,
+      .options =
+          {
+              .list_terminator = "",
+              .min_log_level = Clags_NoLogs,
+          },
+  };
+
+  char *argv[] = {"prog", "value"};
+  int argc = 2;
+
+  clags_config_t *parse_result = clags_parse(argc, argv, &config);
+  assert(parse_result == &config);
+  assert(config.error == Clags_Error_InvalidConfig);
+  assert(values.count == 0);
+  clags_list_free(&values);
+}
+
+// 15. Recursive config cycles are rejected before descent
+void test_subcommand_cycle_rejected() {
+  clags_subcmd_t *root_selected = nullptr;
+  clags_subcmd_t *child_selected = nullptr;
+
+  clags_subcmd_t root_subcmds[1] = {0};
+  clags_subcmd_t child_subcmds[1] = {0};
+  clags_subcmds_t root_subcmd_list = {.items = root_subcmds, .count = 1};
+  clags_subcmds_t child_subcmd_list = {.items = child_subcmds, .count = 1};
+
+  clags_config_t root_config = {
+      .args =
+          (clags_arg_t[]){{.type = Clags_Positional,
+                           .pos = {.arg_name = "root",
+                                   .value_type = Clags_Subcmd,
+                                   .subcmds = &root_subcmd_list,
+                                   .variable = &root_selected}}},
+      .args_count = 1,
+      .options = global_options,
+  };
+  clags_config_t child_config = {
+      .args =
+          (clags_arg_t[]){{.type = Clags_Positional,
+                           .pos = {.arg_name = "child",
+                                   .value_type = Clags_Subcmd,
+                                   .subcmds = &child_subcmd_list,
+                                   .variable = &child_selected}}},
+      .args_count = 1,
+      .options = global_options,
+  };
+
+  root_subcmds[0] = (clags_subcmd_t){.name = "child", .config = &child_config};
+  child_subcmds[0] = (clags_subcmd_t){.name = "root", .config = &root_config};
+
+  char *argv[] = {"prog", "child", "root"};
+  int argc = 3;
+
+  clags_config_t *parse_result = clags_parse(argc, argv, &root_config);
+  assert(parse_result == &child_config);
+  assert(child_config.error == Clags_Error_InvalidOption);
+}
+
+// 16. Freeing duplicated strings clears internal owned config names
+void test_duplicate_string_cleanup_clears_name() {
+  char *value = nullptr;
+
+  clags_config_t config = {
+      .args = (clags_arg_t[]){{.type = Clags_Positional,
+                               .pos = {.arg_name = "value",
+                                       .value_type = Clags_String,
+                                       .variable = &value}}},
+      .args_count = 1,
+      .options =
+          {
+              .duplicate_strings = true,
+              .min_log_level = Clags_NoLogs,
+          },
+  };
+
+  char *argv[] = {"prog", "value"};
+  int argc = 2;
+
+  clags_config_t *parse_result = clags_parse(argc, argv, &config);
+  assert(parse_result == nullptr);
+  assert(config.name != nullptr);
+  clags_config_free_allocs(&config);
+  assert(config.name == nullptr);
+}
+
 int main() {
   test_int_option();
   printf("- Test 'int option' passed!\n");
@@ -308,6 +431,14 @@ int main() {
   printf("- Test 'time nan rejection' passed!\n");
   test_list_item_size_mismatch_rejected();
   printf("- Test 'list item-size mismatch rejection' passed!\n");
+  test_empty_ignore_prefix_rejected();
+  printf("- Test 'empty ignore-prefix rejection' passed!\n");
+  test_empty_list_terminator_rejected();
+  printf("- Test 'empty list-terminator rejection' passed!\n");
+  test_subcommand_cycle_rejected();
+  printf("- Test 'subcommand cycle rejection' passed!\n");
+  test_duplicate_string_cleanup_clears_name();
+  printf("- Test 'duplicate-string cleanup name reset' passed!\n");
 
   printf("\nAll tests passed!\n");
   return 0;
